@@ -1568,6 +1568,35 @@ const parseVirtualConfig = (raw) => {
   }
 }
 
+// 将 ISO 格式转换为 datetime-local 格式 (YYYY-MM-DDTHH:MM)
+const toDatetimeLocal = (isoString) => {
+  if (!isoString) return ''
+  try {
+    const date = new Date(isoString)
+    if (isNaN(date.getTime())) return ''
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    return `${year}-${month}-${day}T${hours}:${minutes}`
+  } catch (_) {
+    return ''
+  }
+}
+
+// 将 datetime-local 格式转换为 ISO 格式
+const toISOString = (datetimeLocal) => {
+  if (!datetimeLocal) return ''
+  try {
+    const date = new Date(datetimeLocal)
+    if (isNaN(date.getTime())) return ''
+    return date.toISOString()
+  } catch (_) {
+    return ''
+  }
+}
+
 const openAddVirtualModal = () => {
   virtualForm.value = {
     id: '',
@@ -1591,9 +1620,9 @@ const openAddVirtualModal = () => {
     ram_usage_max: 55,
     disk_usage: 45,
     net_in_min: 1024,
-    net_in_max: 524288,
+    net_in_max: 102400,
     net_out_min: 512,
-    net_out_max: 262144,
+    net_out_max: 51200,
     ping_ct: 5,
     ping_cu: 10,
     ping_cm: 15,
@@ -1603,7 +1632,7 @@ const openAddVirtualModal = () => {
     udp_conn: 5,
     ip_v4: '1',
     ip_v6: '0',
-    boot_time: new Date(Date.now() - 86400000 * 30).toISOString().slice(0, 19) + 'Z',
+    boot_time: toDatetimeLocal(new Date(Date.now() - 86400000 * 30).toISOString()),
     net_rx: 1073741824,
     net_tx: 536870912,
     price: '',
@@ -1653,7 +1682,7 @@ const openEditVirtualModal = (server) => {
     udp_conn: cfg.udp_conn ?? 5,
     ip_v4: cfg.ip_v4 || '1',
     ip_v6: cfg.ip_v6 || '0',
-    boot_time: cfg.boot_time || '',
+    boot_time: toDatetimeLocal(cfg.boot_time),
     net_rx: cfg.net_rx || 1073741824,
     net_tx: cfg.net_tx || 536870912,
     price: normalizePrice(server.price),
@@ -1714,7 +1743,7 @@ const saveVirtualServer = async () => {
     udp_conn: form.udp_conn,
     ip_v4: form.ip_v4,
     ip_v6: form.ip_v6,
-    boot_time: form.boot_time,
+    boot_time: toISOString(form.boot_time),
     net_rx: form.net_rx,
     net_tx: form.net_tx,
     price: normalizePrice(form.price),

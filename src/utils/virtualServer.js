@@ -74,10 +74,10 @@ const DEFAULT_CONFIG = {
   ram_usage_min: 25,
   ram_usage_max: 55,
   disk_usage: 45,
-  net_in_min: 1024,     // B/s
-  net_in_max: 524288,   // 512 KB/s
-  net_out_min: 512,     // B/s
-  net_out_max: 262144,  // 256 KB/s
+  net_in_min: 1024,     // B/s (1 KB/s)
+  net_in_max: 102400,   // 100 KB/s - 更合理的上限
+  net_out_min: 512,     // B/s (0.5 KB/s)
+  net_out_max: 51200,   // 50 KB/s - 更合理的上限
   ping_ct: 5,
   ping_cu: 10,
   ping_cm: 15,
