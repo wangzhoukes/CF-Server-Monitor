@@ -9,6 +9,7 @@ import {
   getLatestReportSampleTimestamp,
   getWorkerLatestReportUpdates
 } from '../utils/latestReportCache.js';
+import { isVirtualServer, generateVirtualMetrics } from '../utils/virtualServer.js';
 
 const LATEST_REPORT_ID_CHUNK_SIZE = 500;
 
@@ -37,6 +38,7 @@ function withoutPrivateServerFields(server) {
   delete item.bandwidth;
   delete item.note;
   delete item.auto_update;
+  delete item.virtual_config;
   return normalizePublicIpFields(item);
 }
 
@@ -156,12 +158,19 @@ export async function handleServerAPI(request, env, sys) {
   const server = await getServerDetail(env.DB, id, isLoggedIn);
   if (!server) return createNotFoundResponse('Server not found');
   
-  const [latestMetrics, latestReportUpdates] = await Promise.all([
-    getLatestMetrics(env.DB, id, server),
-    getLatestReportUpdatesForServers(env, [id])
-  ]);
-  mergeMetricsIntoServer(server, latestMetrics);
-  server.latestReportUpdates = latestReportUpdates;
+  if (isVirtualServer(server)) {
+    const virtualMetrics = generateVirtualMetrics(server);
+    mergeMetricsIntoServer(server, virtualMetrics);
+    server.is_online = true;
+    server.latestReportUpdates = [];
+  } else {
+    const [latestMetrics, latestReportUpdates] = await Promise.all([
+      getLatestMetrics(env.DB, id, server),
+      getLatestReportUpdatesForServers(env, [id])
+    ]);
+    mergeMetricsIntoServer(server, latestMetrics);
+    server.latestReportUpdates = latestReportUpdates;
+  }
   server.sysConfig = {
     long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
   };
@@ -190,13 +199,20 @@ export async function handleServersAPI(request, env, sys) {
   const regionStats = {};
   
   for (const server of results) {
-    const latestMetrics = latestMetricsMap.get(server.id);
-    
     let isOnline = false;
-    
-    if (latestMetrics) {
-      isOnline = (now - latestMetrics.timestamp) < 300000;
-      mergeMetricsIntoServer(server, latestMetrics);
+
+    if (isVirtualServer(server)) {
+      const virtualMetrics = generateVirtualMetrics(server);
+      mergeMetricsIntoServer(server, virtualMetrics);
+      server.is_online = true;
+      isOnline = true;
+    } else {
+      const latestMetrics = latestMetricsMap.get(server.id);
+      if (latestMetrics) {
+        isOnline = (now - latestMetrics.timestamp) < 300000;
+        mergeMetricsIntoServer(server, latestMetrics);
+      }
+      server.is_online = isOnline;
     }
     normalizePublicIpFields(server);
     

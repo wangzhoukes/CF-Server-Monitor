@@ -1,6 +1,6 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
-import { getAllServers, clearServersListCache } from '../utils/cache.js';
+import { getAllServers, getServerDetail, clearServersListCache, clearServerDetailCache } from '../utils/cache.js';
 import { clearAppearanceSettingsCache, normalizeDisplayMode, normalizeExpireReminder, normalizeLongHistoryPoints, normalizeResourceAlertRules, normalizeTgNotify, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
@@ -10,6 +10,7 @@ import { clearResourceAlertState, sendNotification } from '../services/notificat
 import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
+import { isVirtualServer, generateVirtualMetrics } from '../utils/virtualServer.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
@@ -108,6 +109,55 @@ function normalizeNetworkInterfaceField(value) {
     return { valid: false, value: '' };
   }
   return { valid: true, value: result.value };
+}
+
+function clampNum(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function buildVirtualConfig(data) {
+  return {
+    os: String(data.os || 'Ubuntu 22.04 LTS').slice(0, 200),
+    arch: String(data.arch || 'x86_64').slice(0, 50),
+    cpu_cores: Math.max(1, Math.min(128, parseInt(data.cpu_cores) || 2)),
+    cpu_info: String(data.cpu_info || 'Intel Xeon E5-2680 v4').slice(0, 200),
+    kernel_version: String(data.kernel_version || '5.15.0-91-generic').slice(0, 200),
+    agent_version: String(data.agent_version || '1.0.0').slice(0, 50),
+    ram_total: clampNum(data.ram_total, 128, 1048576, 2048),
+    disk_total: clampNum(data.disk_total, 1, 10240, 20),
+    swap_total: clampNum(data.swap_total, 0, 1048576, 512),
+    cpu_min: clampNum(data.cpu_min, 0, 100, 3),
+    cpu_max: clampNum(data.cpu_max, 0, 100, 25),
+    ram_usage_min: clampNum(data.ram_usage_min, 0, 100, 25),
+    ram_usage_max: clampNum(data.ram_usage_max, 0, 100, 55),
+    disk_usage: clampNum(data.disk_usage, 0, 99, 45),
+    net_in_min: Math.max(0, clampNum(data.net_in_min, 0, Infinity, 1024)),
+    net_in_max: Math.max(0, clampNum(data.net_in_max, 0, Infinity, 524288)),
+    net_out_min: Math.max(0, clampNum(data.net_out_min, 0, Infinity, 512)),
+    net_out_max: Math.max(0, clampNum(data.net_out_max, 0, Infinity, 262144)),
+    ping_ct: Math.max(1, Math.min(9999, parseInt(data.ping_ct) || 5)),
+    ping_cu: Math.max(1, Math.min(9999, parseInt(data.ping_cu) || 10)),
+    ping_cm: Math.max(1, Math.min(9999, parseInt(data.ping_cm) || 15)),
+    ping_bd: Math.max(1, Math.min(9999, parseInt(data.ping_bd) || 20)),
+    processes: Math.max(1, Math.min(65535, parseInt(data.processes) || 85)),
+    tcp_conn: Math.max(0, Math.min(65535, parseInt(data.tcp_conn) || 30)),
+    udp_conn: Math.max(0, Math.min(65535, parseInt(data.udp_conn) || 5)),
+    ip_v4: String(data.ip_v4 || '1').slice(0, 50),
+    ip_v6: String(data.ip_v6 || '0').slice(0, 50),
+    boot_time: String(data.boot_time || '').slice(0, 100),
+    net_rx: Math.max(0, clampNum(data.net_rx, 0, Infinity, 1073741824)),
+    net_tx: Math.max(0, clampNum(data.net_tx, 0, Infinity, 536870912))
+  };
+}
+
+function validateVirtualConfig(cfg) {
+  if (cfg.cpu_min > cfg.cpu_max) return 'invalidCpuRange';
+  if (cfg.ram_usage_min > cfg.ram_usage_max) return 'invalidRamRange';
+  if (cfg.net_in_min > cfg.net_in_max) return 'invalidNetInRange';
+  if (cfg.net_out_min > cfg.net_out_max) return 'invalidNetOutRange';
+  return null;
 }
 
 function hasAppearanceInput(settings) {
@@ -457,7 +507,11 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
         const item = { ...server, region_override: server.region || '' };
         let isOnline = false;
         
-        if (latestMetrics) {
+        if (isVirtualServer(server)) {
+          const virtualMetrics = generateVirtualMetrics(server);
+          mergeMetricsIntoServer(item, virtualMetrics);
+          isOnline = true;
+        } else if (latestMetrics) {
           isOnline = (now - latestMetrics.timestamp) < ONLINE_THRESHOLD;
           mergeMetricsIntoServer(item, latestMetrics);
         } else {
@@ -818,6 +872,120 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
         message: 'serverUpdated'
       });
     }
+    else if (data.action === 'add_virtual') {
+      const name = data.name || 'Virtual Server';
+      if (!isValidName(name)) {
+        return createBadRequestResponse('invalidServerName');
+      }
+
+      const id = crypto.randomUUID();
+      const group = data.server_group || 'Default';
+      const region = normalizeServerRegion(data.region);
+      const billingData = normalizeServerBillingData(data);
+
+      const virtualConfig = buildVirtualConfig(data);
+      const configError = validateVirtualConfig(virtualConfig);
+      if (configError) {
+        return createBadRequestResponse(configError);
+      }
+
+      const safeTags = String(data.tags || '')
+        .split(',')
+        .map(tag => tag.trim().replace(/[^\p{L}\p{N} ._\-]/gu, '').slice(0, 32))
+        .filter(Boolean)
+        .slice(0, 12)
+        .join(',');
+      const safeNote = String(data.note || '').trim().slice(0, 500);
+
+      try {
+        const { max_order } = await env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM servers').first();
+        const sortOrder = (max_order || 0) + 1;
+        const historyPartitionId = await getNextServerHistoryPartitionId(env.DB);
+
+        await env.DB.prepare(`
+          INSERT INTO servers
+          (id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, is_virtual, virtual_config, is_hidden, sort_order, history_partition_id, timestamp)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1', ?, ?, ?, ?, ?)
+        `).bind(
+          id, name, group, region, safeTags, safeNote,
+          billingData.price, billingData.billing_cycle, billingData.auto_renewal,
+          billingData.currency, billingData.expire_date,
+          data.traffic_limit || '',
+          JSON.stringify(virtualConfig),
+          normalizeBooleanFlag(data.is_hidden),
+          sortOrder, historyPartitionId, Date.now()
+        ).run();
+      } catch (e) {
+        return handleServerMutationError(env.DB, e, 'serverAddFailed');
+      }
+
+      clearServersListCache();
+
+      return createSuccessResponse({
+        success: true,
+        id,
+        message: 'virtualServerAdded'
+      });
+    }
+    else if (data.action === 'edit_virtual') {
+      const { id } = data;
+      if (!id || !isValidUUID(id)) {
+        return createBadRequestResponse('invalidServerId');
+      }
+
+      const existing = await getServerDetail(env.DB, id, true);
+      if (!existing) {
+        return createBadRequestResponse('serverNotFound');
+      }
+
+      const billingData = normalizeServerBillingData(data);
+      const virtualConfig = buildVirtualConfig(data);
+      const configError = validateVirtualConfig(virtualConfig);
+      if (configError) {
+        return createBadRequestResponse(configError);
+      }
+
+      const safeTags = String(data.tags || '')
+        .split(',')
+        .map(tag => tag.trim().replace(/[^\p{L}\p{N} ._\-]/gu, '').slice(0, 32))
+        .filter(Boolean)
+        .slice(0, 12)
+        .join(',');
+      const safeNote = String(data.note || '').trim().slice(0, 500);
+
+      try {
+        await env.DB.prepare(`
+          UPDATE servers
+          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, is_virtual = '1', virtual_config = ?, is_hidden = ?
+          WHERE id = ?
+        `).bind(
+          data.name || existing.name || '',
+          data.server_group || 'Default',
+          normalizeServerRegion(data.region),
+          safeTags,
+          safeNote,
+          billingData.price,
+          billingData.billing_cycle,
+          billingData.auto_renewal,
+          billingData.currency,
+          billingData.expire_date,
+          data.traffic_limit || '',
+          JSON.stringify(virtualConfig),
+          normalizeBooleanFlag(data.is_hidden),
+          id
+        ).run();
+      } catch (e) {
+        return handleServerMutationError(env.DB, e, 'serverUpdateFailed');
+      }
+
+      clearServersListCache();
+      clearServerDetailCache();
+
+      return createSuccessResponse({
+        success: true,
+        message: 'virtualServerUpdated'
+      });
+    }
     else if (data.action === 'batch_delete') {
       const { ids } = data;
       if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -918,8 +1086,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
               currency, expire_date,
               traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval,
               auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction,
-              offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              offline_notify_disabled, is_hidden, is_virtual, virtual_config, sort_order, history_partition_id, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
             server.id,
             server.name || '',
@@ -947,6 +1115,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null)
             server.tx_correction ?? null,
             normalizeBooleanFlag(server.offline_notify_disabled),
             normalizeBooleanFlag(server.is_hidden),
+            normalizeBooleanFlag(server.is_virtual),
+            server.virtual_config || '',
             server.sort_order ?? 0,
             partitionId,
             server.timestamp || Date.now()

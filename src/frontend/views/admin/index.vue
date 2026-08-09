@@ -114,6 +114,7 @@
           :copied-note-server-id="copiedNoteServerId"
           :copied-spec-key="copiedSpecKey"
           @add-server="addServer"
+        @add-virtual-server="openAddVirtualModal"
           @batch-delete="batchDelete"
           @toggle-select-all="toggleSelectAll"
           @select-all="handleSelectAll"
@@ -177,6 +178,15 @@
         @save="saveEdit"
         @close="closeEditModal"
         @toggle-auto-update="handleAutoUpdateToggle"
+      />
+
+      <EditVirtualServerModal
+        :trans="trans"
+        :show="showEditVirtualModal"
+        v-model:virtual-form="virtualForm"
+        :is-editing="!!virtualForm.id"
+        @save="saveVirtualServer"
+        @close="closeEditVirtualModal"
       />
 
       <div v-if="showAutoUpdateWarning" id="autoUpdateWarningModal" class="modal-overlay auto-update-warning-modal active">
@@ -471,6 +481,7 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import DatabasePanel from './components/DatabasePanel.vue'
 import ThemeStorePanel from './components/ThemeStorePanel.vue'
 import EditServerModal from './components/EditServerModal.vue'
+import EditVirtualServerModal from './components/EditVirtualServerModal.vue'
 import DeleteServerModal from './components/DeleteServerModal.vue'
 import CopyCommandModal from './components/CopyCommandModal.vue'
 import { adminApi, login, logout as apiLogout, upgradeDatabase, clearHistory, getApiBases, fetchConfig } from '../../utils/api'
@@ -775,6 +786,52 @@ const {
 } = useTurnstile()
 
 const showEditModal = ref(false)
+const showEditVirtualModal = ref(false)
+const virtualForm = ref({
+  id: '',
+  name: '',
+  server_group: '',
+  region: '',
+  tags: '',
+  note: '',
+  os: 'Ubuntu 22.04 LTS',
+  arch: 'x86_64',
+  cpu_cores: 2,
+  cpu_info: 'Intel Xeon E5-2680 v4',
+  kernel_version: '5.15.0-91-generic',
+  agent_version: '1.0.0',
+  ram_total: 2048,
+  disk_total: 20,
+  swap_total: 512,
+  cpu_min: 3,
+  cpu_max: 25,
+  ram_usage_min: 25,
+  ram_usage_max: 55,
+  disk_usage: 45,
+  net_in_min: 1024,
+  net_in_max: 524288,
+  net_out_min: 512,
+  net_out_max: 262144,
+  ping_ct: 5,
+  ping_cu: 10,
+  ping_cm: 15,
+  ping_bd: 20,
+  processes: 85,
+  tcp_conn: 30,
+  udp_conn: 5,
+  ip_v4: '1',
+  ip_v6: '0',
+  boot_time: '',
+  net_rx: 1073741824,
+  net_tx: 536870912,
+  price: '',
+  billing_cycle: 'month',
+  auto_renewal: false,
+  currency: '¥',
+  expire_date: '',
+  traffic_limit: '',
+  is_hidden: false
+})
 const editForm = ref({
   id: '',
   name: '',
@@ -1019,6 +1076,7 @@ const handleApiIndexChange = async (newIndex) => {
 const resetAdminContext = () => {
   selectedServers.value = []
   showEditModal.value = false
+  showEditVirtualModal.value = false
   showDeleteModal.value = false
   showCopyModal.value = false
   showDbModal.value = false
@@ -1460,6 +1518,10 @@ const copyUninstallCmd = async () => {
 }
 
 const openEditModal = (server) => {
+  if (server.is_virtual === '1' || server.is_virtual === 1 || server.is_virtual === true) {
+    openEditVirtualModal(server)
+    return
+  }
   editForm.value = {
     id: server.id,
     name: server.name || '',
@@ -1495,6 +1557,191 @@ const openEditModal = (server) => {
 const closeEditModal = () => {
   cancelAutoUpdateWarning()
   showEditModal.value = false
+}
+
+const parseVirtualConfig = (raw) => {
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch (_) {
+    return {}
+  }
+}
+
+const openAddVirtualModal = () => {
+  virtualForm.value = {
+    id: '',
+    name: '',
+    server_group: newServerGroup.value || '',
+    region: '',
+    tags: '',
+    note: '',
+    os: 'Ubuntu 22.04 LTS',
+    arch: 'x86_64',
+    cpu_cores: 2,
+    cpu_info: 'Intel Xeon E5-2680 v4',
+    kernel_version: '5.15.0-91-generic',
+    agent_version: '1.0.0',
+    ram_total: 2048,
+    disk_total: 20,
+    swap_total: 512,
+    cpu_min: 3,
+    cpu_max: 25,
+    ram_usage_min: 25,
+    ram_usage_max: 55,
+    disk_usage: 45,
+    net_in_min: 1024,
+    net_in_max: 524288,
+    net_out_min: 512,
+    net_out_max: 262144,
+    ping_ct: 5,
+    ping_cu: 10,
+    ping_cm: 15,
+    ping_bd: 20,
+    processes: 85,
+    tcp_conn: 30,
+    udp_conn: 5,
+    ip_v4: '1',
+    ip_v6: '0',
+    boot_time: new Date(Date.now() - 86400000 * 30).toISOString().slice(0, 19) + 'Z',
+    net_rx: 1073741824,
+    net_tx: 536870912,
+    price: '',
+    billing_cycle: 'month',
+    auto_renewal: false,
+    currency: '¥',
+    expire_date: '',
+    traffic_limit: '',
+    is_hidden: false
+  }
+  showEditVirtualModal.value = true
+}
+
+const openEditVirtualModal = (server) => {
+  const cfg = parseVirtualConfig(server.virtual_config)
+  virtualForm.value = {
+    id: server.id,
+    name: server.name || '',
+    server_group: server.server_group || '',
+    region: server.region_override ?? (server.region || ''),
+    tags: server.tags || '',
+    note: server.note || '',
+    os: cfg.os || 'Ubuntu 22.04 LTS',
+    arch: cfg.arch || 'x86_64',
+    cpu_cores: cfg.cpu_cores || 2,
+    cpu_info: cfg.cpu_info || 'Intel Xeon E5-2680 v4',
+    kernel_version: cfg.kernel_version || '5.15.0-91-generic',
+    agent_version: cfg.agent_version || '1.0.0',
+    ram_total: cfg.ram_total || 2048,
+    disk_total: cfg.disk_total || 20,
+    swap_total: cfg.swap_total || 512,
+    cpu_min: cfg.cpu_min ?? 3,
+    cpu_max: cfg.cpu_max ?? 25,
+    ram_usage_min: cfg.ram_usage_min ?? 25,
+    ram_usage_max: cfg.ram_usage_max ?? 55,
+    disk_usage: cfg.disk_usage ?? 45,
+    net_in_min: cfg.net_in_min ?? 1024,
+    net_in_max: cfg.net_in_max ?? 524288,
+    net_out_min: cfg.net_out_min ?? 512,
+    net_out_max: cfg.net_out_max ?? 262144,
+    ping_ct: cfg.ping_ct || 5,
+    ping_cu: cfg.ping_cu || 10,
+    ping_cm: cfg.ping_cm || 15,
+    ping_bd: cfg.ping_bd || 20,
+    processes: cfg.processes || 85,
+    tcp_conn: cfg.tcp_conn ?? 30,
+    udp_conn: cfg.udp_conn ?? 5,
+    ip_v4: cfg.ip_v4 || '1',
+    ip_v6: cfg.ip_v6 || '0',
+    boot_time: cfg.boot_time || '',
+    net_rx: cfg.net_rx || 1073741824,
+    net_tx: cfg.net_tx || 536870912,
+    price: normalizePrice(server.price),
+    billing_cycle: normalizeBillingCycle(detectBillingCycle(server.price) || server.billing_cycle),
+    auto_renewal: server.auto_renewal === '1',
+    currency: normalizeCurrency(server.currency || detectCurrencySymbol(server.price) || '¥'),
+    expire_date: server.expire_date || '',
+    traffic_limit: server.traffic_limit || '',
+    is_hidden: server.is_hidden === '1'
+  }
+  currentServerName.value = server.name || ''
+  showEditVirtualModal.value = true
+}
+
+const closeEditVirtualModal = () => {
+  showEditVirtualModal.value = false
+}
+
+const saveVirtualServer = async () => {
+  const form = virtualForm.value
+  if (!form.name || !form.name.trim()) {
+    validationError.value = trans.value.enterServerName
+    return
+  }
+
+  const isEditing = !!form.id
+  const data = {
+    action: isEditing ? 'edit_virtual' : 'add_virtual',
+    name: form.name,
+    server_group: form.server_group || 'Default',
+    region: form.region,
+    tags: form.tags,
+    note: form.note,
+    os: form.os,
+    arch: form.arch,
+    cpu_cores: form.cpu_cores,
+    cpu_info: form.cpu_info,
+    kernel_version: form.kernel_version,
+    agent_version: form.agent_version,
+    ram_total: form.ram_total,
+    disk_total: form.disk_total,
+    swap_total: form.swap_total,
+    cpu_min: form.cpu_min,
+    cpu_max: form.cpu_max,
+    ram_usage_min: form.ram_usage_min,
+    ram_usage_max: form.ram_usage_max,
+    disk_usage: form.disk_usage,
+    net_in_min: form.net_in_min,
+    net_in_max: form.net_in_max,
+    net_out_min: form.net_out_min,
+    net_out_max: form.net_out_max,
+    ping_ct: form.ping_ct,
+    ping_cu: form.ping_cu,
+    ping_cm: form.ping_cm,
+    ping_bd: form.ping_bd,
+    processes: form.processes,
+    tcp_conn: form.tcp_conn,
+    udp_conn: form.udp_conn,
+    ip_v4: form.ip_v4,
+    ip_v6: form.ip_v6,
+    boot_time: form.boot_time,
+    net_rx: form.net_rx,
+    net_tx: form.net_tx,
+    price: normalizePrice(form.price),
+    billing_cycle: normalizeBillingCycle(form.billing_cycle),
+    auto_renewal: form.auto_renewal ? '1' : '0',
+    currency: normalizeCurrency(form.currency || detectCurrencySymbol(form.price) || '¥'),
+    expire_date: form.expire_date,
+    traffic_limit: form.traffic_limit,
+    is_hidden: form.is_hidden ? '1' : '0'
+  }
+  if (isEditing) {
+    data.id = form.id
+  }
+
+  try {
+    const result = await adminApiForSite(data)
+    if (!result.error) {
+      const msg = getMessage(result.data.message) || (isEditing ? trans.value.virtualServerUpdated : trans.value.virtualServerAdded)
+      saveResult.value = { success: true, message: msg }
+      showEditVirtualModal.value = false
+      loadServers()
+    } else {
+      saveResult.value = { success: false, error: getMessage(result.error) || 'Fail' }
+    }
+  } catch (e) {
+    saveResult.value = { success: false, error: e.message }
+  }
 }
 
 const handleAutoUpdateToggle = (nextValue) => {

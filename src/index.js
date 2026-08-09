@@ -13,6 +13,7 @@ import { AppError, createSuccessResponse, createUnauthorizedResponse, createBadR
 import { verifyTurnstileToken } from './utils/common.js';
 import { getCorsAllowedOrigins, createOptionsResponse, applyCors } from './utils/cors.js';
 import { getRemoteVersion } from './utils/version.js';
+import { isVirtualServer, generateVirtualHistoryData } from './utils/virtualServer.js';
 // Durable Objects: 实时指标广播
 // 显式 import + extends，确保 wrangler 静态分析器能在入口文件直接识别此 DO 类
 import { MetricsBroadcaster as _MetricsBroadcaster }
@@ -169,7 +170,17 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
   if (cached && Date.now() - cached.timestamp < cacheDuration) {
     return createSuccessResponse(cached.data, { 'X-Cache': 'HIT' });
   }
-  
+
+  // 虚拟服务器：直接生成历史数据，不查数据库
+  if (isVirtualServer(server)) {
+    const maxPoints = clampedHours > 1
+      ? Number(longHistoryPoints || 160)
+      : 160;
+    const virtualData = generateVirtualHistoryData(server, clampedHours, maxPoints);
+    setMetricsHistoryCache(id, clampedHours, columns, virtualData, longHistoryPoints);
+    return createSuccessResponse(virtualData, { 'X-Cache': 'MISS' });
+  }
+
   let data;
   try {
     data = await getMetricsHistory(

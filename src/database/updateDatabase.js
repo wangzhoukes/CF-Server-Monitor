@@ -122,6 +122,8 @@ export async function addServerColumns(db) {
     
     const newCols = {
       is_hidden: "TEXT DEFAULT '0'",
+      is_virtual: "TEXT DEFAULT '0'",
+      virtual_config: "TEXT DEFAULT ''",
       offline_notify_disabled: "TEXT DEFAULT '0'",
       sort_order: "INTEGER DEFAULT 0",
       region: "TEXT DEFAULT ''",

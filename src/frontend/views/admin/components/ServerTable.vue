@@ -17,6 +17,7 @@
         <button v-if="newServerGroup" @click="newServerGroup = ''" class="toolbar-select-clear" title="Clear">✕</button>
       </div>
       <button @click="$emit('add-server')" class="btn btn-primary">+ {{ trans.addServer }}</button>
+      <button @click="$emit('add-virtual-server')" class="btn btn-primary">+ {{ trans.addVirtualServer }}</button>
     </div>
 
     <div class="batch-actions">
@@ -191,7 +192,7 @@ const newServerName = defineModel('newServerName', { type: String, default: '' }
 const newServerGroup = defineModel('newServerGroup', { type: String, default: '' })
 
 const emit = defineEmits([
-  'add-server', 'batch-delete', 'toggle-select-all', 'select-all',
+  'add-server', 'add-virtual-server', 'batch-delete', 'toggle-select-all', 'select-all',
   'drag-start', 'drop', 'toggle-server', 'copy-note',
   'copy-spec', 'copy-cmd', 'edit', 'delete'
 ])

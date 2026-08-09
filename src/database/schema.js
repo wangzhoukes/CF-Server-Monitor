@@ -66,6 +66,8 @@ export async function initDatabase(db) {
           tx_correction REAL DEFAULT NULL,
           offline_notify_disabled TEXT DEFAULT '0',
           is_hidden TEXT DEFAULT '0',
+          is_virtual TEXT DEFAULT '0',
+          virtual_config TEXT DEFAULT '',
           sort_order INTEGER DEFAULT 0,
           history_partition_id INTEGER DEFAULT 0,
           timestamp INTEGER DEFAULT 0
