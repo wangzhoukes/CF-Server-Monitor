@@ -179,12 +179,15 @@ export function generateVirtualMetrics(server) {
   const net_in_speed = parseFloat(lerp(cfg.net_in_min, cfg.net_in_max, netInT).toFixed(2));
   const net_out_speed = parseFloat(lerp(cfg.net_out_min, cfg.net_out_max, netOutT).toFixed(2));
 
-  // ── 网络累计流量 ──（每分钟递增）
-  const minutesSinceBoot = cfg.boot_time
-    ? Math.floor((now - new Date(cfg.boot_time).getTime()) / 60000)
-    : Math.floor(now / 60000) - 525600; // 默认约一年
-  const net_rx = Math.max(0, parseFloat((cfg.net_rx + net_in_speed * 60 * Math.max(1, minutesSinceBoot)).toFixed(2)));
-  const net_tx = Math.max(0, parseFloat((cfg.net_tx + net_out_speed * 60 * Math.max(1, minutesSinceBoot)).toFixed(2)));
+  // ── 网络累计流量 ──（基于启动时间计算，更真实）
+  const bootTimeMs = cfg.boot_time ? new Date(cfg.boot_time).getTime() : (now - 86400000 * 30);
+  const minutesSinceBoot = Math.max(0, Math.floor((now - bootTimeMs) / 60000));
+  // 平均速率 × 时间 = 总流量，添加一些随机波动使其更自然
+  const avgNetInSpeed = (cfg.net_in_min + cfg.net_in_max) / 2;
+  const avgNetOutSpeed = (cfg.net_out_min + cfg.net_out_max) / 2;
+  const trafficNoise = 0.8 + rng() * 0.4; // 0.8 ~ 1.2 的随机系数
+  const net_rx = Math.max(0, parseFloat((avgNetInSpeed * 60 * minutesSinceBoot * trafficNoise).toFixed(2)));
+  const net_tx = Math.max(0, parseFloat((avgNetOutSpeed * 60 * minutesSinceBoot * trafficNoise).toFixed(2)));
 
   // ── 进程数、连接数 ──（小幅波动）
   const procNoise = Math.floor((rng() - 0.5) * 10);
@@ -306,14 +309,23 @@ function generateVirtualMetricsAtTime(server, timestamp) {
   const load5 = parseFloat((cpu / 100 * cfg.cpu_cores * 0.6).toFixed(2));
   const load15 = parseFloat((cpu / 100 * cfg.cpu_cores * 0.5).toFixed(2));
 
+  // 基于启动时间计算累计流量
+  const bootTimeMs = cfg.boot_time ? new Date(cfg.boot_time).getTime() : (timestamp - 86400000 * 30);
+  const minutesSinceBoot = Math.max(0, Math.floor((timestamp - bootTimeMs) / 60000));
+  const avgNetInSpeed = (cfg.net_in_min + cfg.net_in_max) / 2;
+  const avgNetOutSpeed = (cfg.net_out_min + cfg.net_out_max) / 2;
+  const trafficNoise = 0.8 + rng() * 0.4;
+  const net_rx = Math.max(0, parseFloat((avgNetInSpeed * 60 * minutesSinceBoot * trafficNoise).toFixed(2)));
+  const net_tx = Math.max(0, parseFloat((avgNetOutSpeed * 60 * minutesSinceBoot * trafficNoise).toFixed(2)));
+
   return {
     timestamp,
     cpu,
     load_avg: `${load1} ${load5} ${load15}`,
     net_in_speed,
     net_out_speed,
-    net_rx: parseFloat((cfg.net_rx + net_in_speed * 60 * Math.max(1, Math.floor((timestamp - new Date(cfg.boot_time || Date.now() - 86400000 * 30).getTime()) / 60000))).toFixed(2)),
-    net_tx: parseFloat((cfg.net_tx + net_out_speed * 60 * Math.max(1, Math.floor((timestamp - new Date(cfg.boot_time || Date.now() - 86400000 * 30).getTime()) / 60000))).toFixed(2)),
+    net_rx,
+    net_tx,
     processes: Math.max(1, cfg.processes + Math.floor((rng() - 0.5) * 10)),
     tcp_conn: Math.max(0, cfg.tcp_conn + Math.floor((rng() - 0.5) * 8)),
     udp_conn: cfg.udp_conn,

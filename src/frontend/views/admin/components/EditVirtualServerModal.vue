@@ -184,13 +184,21 @@
 
       <div class="form-row">
         <div class="form-group flex-1">
+          <label class="form-label">{{ trans.bootTime || 'Boot Time' }}</label>
+          <input type="datetime-local" v-model="virtualForm.boot_time" class="form-input">
+        </div>
+        <div class="form-group flex-1">
           <label class="form-label">{{ trans.expirationDate }}</label>
           <input type="date" v-model="virtualForm.expire_date" class="form-input">
         </div>
+      </div>
+
+      <div class="form-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.traffic }} (GB)</label>
           <input type="number" v-model.number="virtualForm.traffic_limit" class="form-input" min="0" placeholder="0">
         </div>
+        <div class="form-group flex-1"></div>
       </div>
 
       <div class="form-row">
